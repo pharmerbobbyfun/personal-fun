@@ -1,0 +1,958 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<title>Wrap Studio</title>
+<meta name="description" content="Design custom wraps for the Tesla Paint Shop, right in the browser."/>
+<style>
+  :root{
+    --bg:#0e1013; --panel:#171a1f; --panel-2:#1f242b; --line:#2b323b;
+    --text:#e9edf2; --muted:#9aa5b1; --accent:#5b9dff; --accent-2:#ff5f6d;
+    --radius:12px;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--text);
+    font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,Helvetica,Arial,sans-serif;
+    -webkit-text-size-adjust:100%;
+  }
+  header{
+    padding:18px 16px 14px; border-bottom:1px solid var(--line);
+    display:flex; flex-wrap:wrap; gap:10px 16px; align-items:baseline;
+  }
+  header h1{margin:0; font-size:20px; letter-spacing:-.01em}
+  header .sub{color:var(--muted); font-size:13px}
+  header .sub a{color:var(--accent); text-decoration:none}
+  main{
+    display:grid; grid-template-columns:320px minmax(0,1fr); gap:16px;
+    padding:16px; max-width:1500px; margin:0 auto; align-items:start;
+  }
+  @media (max-width:900px){
+    main{grid-template-columns:1fr; padding:12px}
+    .stage{order:-1; position:static}      /* canvas first on a phone */
+  }
+
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:var(--radius); padding:14px}
+  .card + .card{margin-top:12px}
+  .card h2{margin:0 0 10px; font-size:13px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted)}
+
+  label.row{display:flex; align-items:center; justify-content:space-between; gap:10px; margin:8px 0; font-size:13px}
+  label.row span{color:var(--muted)}
+  input[type=range]{width:150px; accent-color:var(--accent)}
+  input[type=text],input[type=number],select,textarea{
+    background:var(--panel-2); color:var(--text); border:1px solid var(--line);
+    border-radius:8px; padding:7px 9px; font:inherit; font-size:13px; width:100%;
+  }
+  input[type=color]{
+    width:38px; height:30px; padding:0; border:1px solid var(--line);
+    border-radius:8px; background:var(--panel-2); cursor:pointer;
+  }
+  .swatches{display:flex; gap:8px; align-items:center}
+  button{
+    background:var(--panel-2); color:var(--text); border:1px solid var(--line);
+    border-radius:9px; padding:8px 11px; font:inherit; font-size:13px; cursor:pointer;
+  }
+  button:hover{border-color:#3d4854}
+  button.primary{background:var(--accent); border-color:var(--accent); color:#06101f; font-weight:600}
+  button.primary:hover{filter:brightness(1.07)}
+  .btns{display:flex; flex-wrap:wrap; gap:8px; margin-top:10px}
+  .seg{display:flex; gap:6px; flex-wrap:wrap}
+  .seg button{flex:1 1 auto}
+  .seg button[aria-pressed=true]{background:var(--accent); border-color:var(--accent); color:#06101f; font-weight:600}
+
+  .vehicles{display:grid; grid-template-columns:repeat(3,1fr); gap:8px; max-height:250px; overflow:auto}
+  .vehicles button{padding:6px 4px; display:flex; flex-direction:column; align-items:center; gap:4px; line-height:1.2}
+  .vehicles img{width:100%; height:44px; object-fit:contain; border-radius:6px; background:linear-gradient(#39414c,#242a32)}
+  .vehicles .nm{font-size:11px; color:var(--muted); text-align:center}
+  .vehicles button[aria-pressed=true]{border-color:var(--accent)}
+  .vehicles button[aria-pressed=true] .nm{color:var(--text)}
+
+  .stage{
+    background:var(--panel); border:1px solid var(--line); border-radius:var(--radius);
+    padding:14px; position:sticky; top:16px;
+  }
+  .canvas-wrap{
+    position:relative; border-radius:10px; overflow:hidden;
+    background-color:#20252c;
+    background-image:linear-gradient(45deg,#272d35 25%,transparent 25%),linear-gradient(-45deg,#272d35 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#272d35 75%),linear-gradient(-45deg,transparent 75%,#272d35 75%);
+    background-size:20px 20px; background-position:0 0,0 10px,10px -10px,-10px 0;
+  }
+  canvas{display:block; width:100%; height:auto; touch-action:none; cursor:crosshair}
+  .stage footer{display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between; margin-top:12px}
+  .status{color:var(--muted); font-size:12.5px; min-height:18px}
+  .status.warn{color:var(--accent-2)}
+  .status.ok{color:#5ad18a}
+  .hint{color:var(--muted); font-size:12px; margin:8px 0 0}
+  .presets{display:grid; grid-template-columns:repeat(2,1fr); gap:8px}
+  details{border-top:1px solid var(--line); margin-top:12px; padding-top:10px}
+  details summary{cursor:pointer; color:var(--muted); font-size:13px}
+  details p, details li{font-size:13px; color:var(--muted)}
+  details ol{padding-left:18px}
+  code{background:var(--panel-2); border:1px solid var(--line); border-radius:5px; padding:1px 5px; font-size:12px}
+  .export-row{display:flex; gap:8px; align-items:center}
+  .export-row input{flex:1}
+</style>
+</head>
+<body>
+<header>
+  <h1>Wrap Studio</h1>
+  <div class="sub">
+    Paint a wrap for your Tesla's Paint Shop &mdash; templates from
+    <a href="https://github.com/teslamotors/custom-wraps" target="_blank" rel="noopener">teslamotors/custom-wraps</a>.
+  </div>
+</header>
+
+<main>
+  <div class="controls">
+    <div class="card">
+      <h2>Vehicle</h2>
+      <div class="vehicles" id="vehicles"></div>
+      <p class="hint" id="vehicleNote"></p>
+    </div>
+
+    <div class="card">
+      <h2>Paint style</h2>
+      <div class="seg" id="styleKinds">
+        <button data-kind="solid" aria-pressed="true">Solid</button>
+        <button data-kind="gradient" aria-pressed="false">Gradient</button>
+        <button data-kind="pattern" aria-pressed="false">Pattern</button>
+      </div>
+
+      <label class="row" id="patternRow"><span>Pattern</span>
+        <select id="pattern">
+          <option value="camo">Camo</option>
+          <option value="digital">Digital camo</option>
+          <option value="stripes">Stripes</option>
+          <option value="checker">Checker</option>
+          <option value="dots">Dots</option>
+          <option value="spots">Leopard</option>
+          <option value="waves">Waves</option>
+          <option value="carbon">Carbon weave</option>
+          <option value="grain">Grain</option>
+        </select>
+      </label>
+
+      <label class="row"><span>Colors</span>
+        <span class="swatches">
+          <input type="color" id="c1" value="#1b3a7a"/>
+          <input type="color" id="c2" value="#4a7fd4"/>
+          <input type="color" id="c3" value="#0b1220"/>
+        </span>
+      </label>
+      <label class="row" id="angleRow"><span>Angle</span><input type="range" id="angle" min="0" max="360" value="35"/></label>
+      <label class="row" id="scaleRow"><span>Scale</span><input type="range" id="scale" min="8" max="220" value="70"/></label>
+
+      <div class="btns">
+        <button id="shuffle">Shuffle pattern</button>
+        <button id="swap">Swap colors</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Painting</h2>
+      <div class="seg" id="tools">
+        <button data-tool="panel" aria-pressed="true">Panel</button>
+        <button data-tool="image" aria-pressed="false">Move photo</button>
+        <button data-tool="text" aria-pressed="false">Move text</button>
+      </div>
+      <p class="hint" id="toolHint">Click a panel on the template to paint it with the current style.</p>
+      <div class="btns">
+        <button id="fillAll">Fill every panel</button>
+        <button id="randomPanels">Random per panel</button>
+        <button id="undo">Undo</button>
+        <button id="clearPaint">Clear paint</button>
+      </div>
+      <label class="row"><span>Seam cover</span><input type="range" id="bleed" min="0" max="12" value="7"/></label>
+      <p class="hint">Seam cover spreads the paint over the black panel edges so the finished wrap has no white lines.</p>
+    </div>
+
+    <div class="card">
+      <h2>Photo layer</h2>
+      <input type="file" id="imgFile" accept="image/*"/>
+      <label class="row"><span>Size</span><input type="range" id="imgScale" min="5" max="300" value="100"/></label>
+      <label class="row"><span>Rotation</span><input type="range" id="imgRot" min="-180" max="180" value="0"/></label>
+      <label class="row"><span>Opacity</span><input type="range" id="imgOpacity" min="0" max="100" value="100"/></label>
+      <label class="row"><span>Blend</span>
+        <select id="imgBlend">
+          <option value="source-over">Normal</option>
+          <option value="multiply">Multiply</option>
+          <option value="screen">Screen</option>
+          <option value="overlay">Overlay</option>
+          <option value="luminosity">Luminosity</option>
+        </select>
+      </label>
+      <label class="row"><span>Only on painted panels</span><input type="checkbox" id="imgClip"/></label>
+      <div class="btns"><button id="imgRemove">Remove photo</button></div>
+    </div>
+
+    <div class="card">
+      <h2>Text</h2>
+      <input type="text" id="textValue" maxlength="40" placeholder="Add a word or two"/>
+      <label class="row"><span>Size</span><input type="range" id="textSize" min="10" max="300" value="90"/></label>
+      <label class="row"><span>Rotation</span><input type="range" id="textRot" min="-180" max="180" value="0"/></label>
+      <label class="row"><span>Color</span><input type="color" id="textColor" value="#ffffff"/></label>
+      <label class="row"><span>Outline</span><input type="checkbox" id="textOutline" checked/></label>
+    </div>
+
+    <div class="card">
+      <h2>Presets</h2>
+      <div class="presets">
+        <button data-preset="blue-camo">Blue camo</button>
+        <button data-preset="sunburst">Sunburst</button>
+        <button data-preset="stealth">Stealth</button>
+        <button data-preset="racing">Racing stripes</button>
+        <button data-preset="cotton">Cotton candy</button>
+        <button data-preset="rust">Rust</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="stage">
+    <div class="canvas-wrap"><canvas id="cv"></canvas></div>
+
+    <footer>
+      <label class="row" style="margin:0"><span>Template guide</span><input type="range" id="guide" min="0" max="100" value="45"/></label>
+      <label class="row" style="margin:0"><span>Bake outlines</span><input type="checkbox" id="bakeOutline"/></label>
+    </footer>
+
+    <div class="export-row" style="margin-top:12px">
+      <input type="text" id="fileName" value="My Wrap" maxlength="30" spellcheck="false"/>
+      <button class="primary" id="download">Download PNG</button>
+      <button id="save">Save</button>
+    </div>
+    <p class="status" id="status"></p>
+
+    <details>
+      <summary>Getting this onto the car</summary>
+      <ol>
+        <li>Download the PNG (it is already the template's size and kept under 1&nbsp;MB).</li>
+        <li>Mobile app (v4.59.0+): <strong>Creations &rarr; Wrap &rarr; Upload</strong>, or copy the files into a folder named <code>Wraps</code> at the root of a USB drive (exFAT / FAT32 / MS-DOS FAT / ext3 / ext4 &mdash; not NTFS).</li>
+        <li>In the car: <strong>Toybox &rarr; Paint Shop &rarr; Wraps</strong>.</li>
+        <li>Limits: PNG, 512&times;512 to 1024&times;1024, 1&nbsp;MB max, name of up to 30 letters, numbers, spaces, dashes or underscores, 10 wraps from the app plus 10 from USB.</li>
+      </ol>
+      <p>White areas of the template are the paintable skin; the black lines are panel edges and are normally left out of the finished file.</p>
+    </details>
+  </div>
+</main>
+
+<script>
+(function(){
+"use strict";
+
+var VEHICLES = [
+  {key:"cybertruck", name:"Cybertruck", note:"Template is 1024×768."},
+  {key:"model3", name:"Model 3", note:""},
+  {key:"model3-2024-base", name:"Model 3 (2024+)", note:"Standard & Premium."},
+  {key:"model3-2024-performance", name:"Model 3 (2024+) Perf", note:""},
+  {key:"modely", name:"Model Y", note:""},
+  {key:"modely-2025-base", name:"Model Y (2025+)", note:"Standard."},
+  {key:"modely-2025-premium", name:"Model Y (2025+) Prem", note:""},
+  {key:"modely-2025-performance", name:"Model Y (2025+) Perf", note:""},
+  {key:"modely-l", name:"Model Y L", note:""},
+  {key:"models-2021", name:"Model S (2021+)", note:""},
+  {key:"models-2025-plaid", name:"Model S (2025+) Plaid", note:""},
+  {key:"modelx-2021", name:"Model X (2021+)", note:""}
+];
+
+var STORE_KEY = "wrap-studio-v1";
+var MAX_BYTES = 1024 * 1024;
+
+var cv = document.getElementById("cv");
+var ctx = cv.getContext("2d");
+var scratch = document.createElement("canvas");
+var sctx = scratch.getContext("2d");
+
+var state = {
+  vehicle: "cybertruck",
+  style: {kind:"pattern", pattern:"camo", c1:"#1b3a7a", c2:"#4a7fd4", c3:"#0b1220", angle:35, scale:70, seed:7},
+  fills: [],            // {rid, style}
+  tool: "panel",
+  bleed: 7,
+  guide: 45,
+  bake: false,
+  image: null,          // {src, x, y, scale, rot, opacity, blend, clip}
+  text: {value:"", x:0.5, y:0.5, size:90, rot:0, color:"#ffffff", outline:true},
+  fileName: "My Wrap"
+};
+
+var tpl = null;         // {img, w, h, labels:Int32Array, regions:[{id,size,cx,cy}], masks:{}}
+var imageEl = null;
+var history = [];
+var dragging = null;
+
+/* ---------- seeded rng ---------- */
+function rng(seed){
+  var t = seed >>> 0;
+  return function(){
+    t += 0x6D2B79F5;
+    var r = t;
+    r = Math.imul(r ^ (r >>> 15), r | 1);
+    r ^= r + Math.imul(r ^ (r >>> 7), r | 61);
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/* ---------- template loading + panel detection ---------- */
+function loadTemplate(key){
+  setStatus("Loading template…");
+  var img = new Image();
+  img.onload = function(){
+    var w = img.naturalWidth, h = img.naturalHeight;
+    cv.width = w; cv.height = h;
+    scratch.width = w; scratch.height = h;
+
+    var off = document.createElement("canvas");
+    off.width = w; off.height = h;
+    var octx = off.getContext("2d", {willReadFrequently:true});
+    octx.fillStyle = "#fff"; octx.fillRect(0,0,w,h);   // composite over white: alpha counts as paper
+    octx.drawImage(img, 0, 0);
+    var data = octx.getImageData(0,0,w,h).data;
+
+    var wall = new Uint8Array(w*h);
+    for (var i=0, p=0; i<w*h; i++, p+=4){
+      var lum = 0.299*data[p] + 0.587*data[p+1] + 0.114*data[p+2];
+      wall[i] = lum < 110 ? 1 : 0;                      // the black panel outlines
+    }
+
+    var labels = new Int32Array(w*h).fill(-1);
+    var regions = [];
+    var stack = new Int32Array(w*h);
+    for (var s=0; s<w*h; s++){
+      if (wall[s] || labels[s] !== -1) continue;
+      var id = regions.length, size = 0, sx = 0, sy = 0, sp = 0;
+      stack[sp++] = s; labels[s] = id;
+      while (sp > 0){
+        var q = stack[--sp];
+        var qx = q % w, qy = (q - qx) / w;
+        size++; sx += qx; sy += qy;
+        if (qx > 0   && !wall[q-1] && labels[q-1] === -1){ labels[q-1] = id; stack[sp++] = q-1; }
+        if (qx < w-1 && !wall[q+1] && labels[q+1] === -1){ labels[q+1] = id; stack[sp++] = q+1; }
+        if (qy > 0   && !wall[q-w] && labels[q-w] === -1){ labels[q-w] = id; stack[sp++] = q-w; }
+        if (qy < h-1 && !wall[q+w] && labels[q+w] === -1){ labels[q+w] = id; stack[sp++] = q+w; }
+      }
+      regions.push({id:id, size:size, cx:sx/size, cy:sy/size});
+    }
+
+    tpl = {img:img, w:w, h:h, labels:labels, regions:regions, masks:{}};
+    var paintable = regions.filter(function(r){ return r.size > 500; }).length;
+    render();
+    setStatus(w + "×" + h + " template, " + paintable + " paintable panels. Click one to paint it.");
+  };
+  img.onerror = function(){ setStatus("Could not load that template.", "warn"); };
+  img.src = "templates/" + key + "/template.png";
+}
+
+/* A mask canvas for one region, dilated by `bleed` so anti-aliased edges are covered. */
+function maskFor(rid, bleed){
+  var cacheKey = rid + ":" + bleed;
+  if (tpl.masks[cacheKey]) return tpl.masks[cacheKey];
+  var w = tpl.w, h = tpl.h;
+  var m = document.createElement("canvas");
+  m.width = w; m.height = h;
+  var mctx = m.getContext("2d");
+  var id = mctx.createImageData(w, h);
+  var px = id.data, labels = tpl.labels;
+  for (var i=0, p=0; i<w*h; i++, p+=4){
+    if (labels[i] === rid){ px[p]=255; px[p+1]=255; px[p+2]=255; px[p+3]=255; }
+  }
+  mctx.putImageData(id, 0, 0);
+  if (bleed > 0){
+    var grown = document.createElement("canvas");
+    grown.width = w; grown.height = h;
+    var gctx = grown.getContext("2d");
+    for (var dx=-bleed; dx<=bleed; dx++){
+      for (var dy=-bleed; dy<=bleed; dy++){
+        if (dx*dx + dy*dy > bleed*bleed) continue;
+        gctx.drawImage(m, dx, dy);
+      }
+    }
+    m = grown;
+  }
+  tpl.masks[cacheKey] = m;
+  return m;
+}
+
+/* ---------- paint styles ---------- */
+function paintStyle(c, w, h, st){
+  c.save();
+  c.clearRect(0,0,w,h);
+  if (st.kind === "solid"){
+    c.fillStyle = st.c1; c.fillRect(0,0,w,h);
+  } else if (st.kind === "gradient"){
+    var a = st.angle * Math.PI / 180;
+    var len = Math.abs(w*Math.cos(a)) + Math.abs(h*Math.sin(a));
+    var cxp = w/2, cyp = h/2;
+    var g = c.createLinearGradient(
+      cxp - Math.cos(a)*len/2, cyp - Math.sin(a)*len/2,
+      cxp + Math.cos(a)*len/2, cyp + Math.sin(a)*len/2);
+    g.addColorStop(0, st.c1); g.addColorStop(0.5, st.c2); g.addColorStop(1, st.c3);
+    c.fillStyle = g; c.fillRect(0,0,w,h);
+  } else {
+    drawPattern(c, w, h, st);
+  }
+  c.restore();
+}
+
+function drawPattern(c, w, h, st){
+  var r = rng(st.seed * 7919 + 13);
+  var cols = [st.c1, st.c2, st.c3];
+  var s = Math.max(6, st.scale);
+  c.save();
+  c.fillStyle = st.c1; c.fillRect(0,0,w,h);
+
+  if (st.pattern === "stripes"){
+    c.translate(w/2, h/2); c.rotate(st.angle * Math.PI/180); c.translate(-w, -h);
+    for (var x=0; x<w*3; x+=s*2){
+      c.fillStyle = st.c2; c.fillRect(x, 0, s*0.66, h*3);
+      c.fillStyle = st.c3; c.fillRect(x + s*0.66, 0, s*0.34, h*3);
+    }
+  } else if (st.pattern === "checker"){
+    c.translate(w/2, h/2); c.rotate(st.angle * Math.PI/180); c.translate(-w, -h);
+    for (var cx=0; cx<w*3; cx+=s){
+      for (var cy=0; cy<h*3; cy+=s){
+        c.fillStyle = ((cx/s|0) + (cy/s|0)) % 2 ? st.c2 : st.c1;
+        c.fillRect(cx, cy, s, s);
+      }
+    }
+  } else if (st.pattern === "dots"){
+    for (var dy=0, row=0; dy<h+s; dy+=s, row++){
+      for (var dx=(row%2 ? s/2 : 0); dx<w+s; dx+=s){
+        c.fillStyle = row % 3 === 2 ? st.c3 : st.c2;
+        c.beginPath(); c.arc(dx, dy, s*0.28, 0, Math.PI*2); c.fill();
+      }
+    }
+  } else if (st.pattern === "camo"){
+    var blobs = Math.max(18, Math.round((w*h) / (s*s*4)));
+    for (var b=0; b<blobs; b++){
+      var bx = r()*w, by = r()*h, rad = s*(0.5 + r());
+      c.fillStyle = cols[1 + ((r()*2)|0)];
+      c.beginPath();
+      var pts = 7 + ((r()*5)|0);
+      for (var k=0; k<pts; k++){
+        var ang = (k/pts)*Math.PI*2;
+        var rr = rad * (0.55 + r()*0.75);
+        var px2 = bx + Math.cos(ang)*rr, py2 = by + Math.sin(ang)*rr;
+        if (k === 0) c.moveTo(px2, py2); else c.lineTo(px2, py2);
+      }
+      c.closePath(); c.fill();
+    }
+  } else if (st.pattern === "digital"){
+    var bs = Math.max(6, s/4);
+    for (var gx=0; gx<w; gx+=bs){
+      for (var gy=0; gy<h; gy+=bs){
+        var v = r();
+        if (v < 0.42) continue;
+        c.fillStyle = v < 0.72 ? st.c2 : st.c3;
+        c.fillRect(gx, gy, bs, bs);
+      }
+    }
+  } else if (st.pattern === "spots"){
+    var spots = Math.max(14, Math.round((w*h)/(s*s*3)));
+    for (var sp2=0; sp2<spots; sp2++){
+      var ox = r()*w, oy = r()*h, orad = s*(0.22 + r()*0.28);
+      c.fillStyle = st.c2;
+      for (var pc=0; pc<3; pc++){
+        c.beginPath();
+        c.ellipse(ox + (r()-0.5)*orad*2.2, oy + (r()-0.5)*orad*2.2,
+                  orad*(0.5+r()*0.5), orad*(0.4+r()*0.5), r()*Math.PI, 0, Math.PI*2);
+        c.fill();
+      }
+      c.fillStyle = st.c3;
+      c.beginPath(); c.ellipse(ox, oy, orad*0.55, orad*0.45, r()*Math.PI, 0, Math.PI*2); c.fill();
+    }
+  } else if (st.pattern === "waves"){
+    c.lineWidth = Math.max(3, s*0.22);
+    for (var wy=-h; wy<h*2; wy+=s*0.6){
+      c.strokeStyle = ((wy/(s*0.6))|0) % 2 ? st.c2 : st.c3;
+      c.beginPath();
+      for (var wx=0; wx<=w; wx+=8){
+        var yy = wy + Math.sin((wx/w)*Math.PI*4 + st.angle/30) * s*0.45;
+        if (wx === 0) c.moveTo(wx, yy); else c.lineTo(wx, yy);
+      }
+      c.stroke();
+    }
+  } else if (st.pattern === "carbon"){
+    var cs = Math.max(6, s/6);
+    for (var yx=0; yx<h; yx+=cs){
+      for (var xx=0; xx<w; xx+=cs){
+        var alt = (((xx/cs)|0) + ((yx/cs)|0)) % 2;
+        c.fillStyle = alt ? st.c2 : st.c3;
+        c.fillRect(xx, yx, cs, cs);
+        c.fillStyle = "rgba(255,255,255,0.06)";
+        c.fillRect(xx, yx, cs, cs/3);
+      }
+    }
+  } else if (st.pattern === "grain"){
+    var img = c.getImageData(0,0,w,h);
+    var d = img.data;
+    var a = hexToRgb(st.c1), bC = hexToRgb(st.c2), cC = hexToRgb(st.c3);
+    for (var i2=0, p3=0; i2<w*h; i2++, p3+=4){
+      var t = r();
+      var mix = t < 0.5 ? a : (t < 0.85 ? bC : cC);
+      var j = (r()-0.5)*26;
+      d[p3]   = clamp(mix[0]+j); d[p3+1] = clamp(mix[1]+j);
+      d[p3+2] = clamp(mix[2]+j); d[p3+3] = 255;
+    }
+    c.putImageData(img, 0, 0);
+  }
+  c.restore();
+}
+
+function clamp(v){ return v < 0 ? 0 : v > 255 ? 255 : v|0; }
+function hexToRgb(hex){
+  var n = parseInt(hex.slice(1), 16);
+  return [(n>>16)&255, (n>>8)&255, n&255];
+}
+
+
+/* Grow a layer outwards by `r` pixels (separable, so 2*(2r+1) draws) to cover the
+   template's black panel edges. The original layer is drawn back on top so the
+   panels keep their own colors and only the seams get filled in. */
+function spread(layer, r){
+  if (!r) return layer;
+  var w = layer.width, h = layer.height;
+  var pass1 = document.createElement("canvas");
+  pass1.width = w; pass1.height = h;
+  var c1c = pass1.getContext("2d");
+  for (var dx=-r; dx<=r; dx++) c1c.drawImage(layer, dx, 0);
+  var pass2 = document.createElement("canvas");
+  pass2.width = w; pass2.height = h;
+  var c2c = pass2.getContext("2d");
+  for (var dy=-r; dy<=r; dy++) c2c.drawImage(pass1, 0, dy);
+  c2c.drawImage(layer, 0, 0);
+  return pass2;
+}
+
+/* ---------- compose ---------- */
+function render(forExport){
+  if (!tpl) return;
+  var w = tpl.w, h = tpl.h;
+  var target = ctx;
+  target.clearRect(0,0,w,h);
+
+  var paint = null;
+  if (state.fills.length){
+    paint = document.createElement("canvas");
+    paint.width = w; paint.height = h;
+    var pctx = paint.getContext("2d");
+    state.fills.forEach(function(f){
+      paintStyle(sctx, w, h, f.style);
+      sctx.globalCompositeOperation = "destination-in";
+      sctx.drawImage(maskFor(f.rid, 1), 0, 0);
+      sctx.globalCompositeOperation = "source-over";
+      pctx.drawImage(scratch, 0, 0);
+    });
+    paint = spread(paint, state.bleed);
+    target.drawImage(paint, 0, 0);
+  }
+
+  if (imageEl && state.image){
+    var im = state.image;
+    target.save();
+    if (im.clip && paint){
+      var layer = document.createElement("canvas");
+      layer.width = w; layer.height = h;
+      var lc = layer.getContext("2d");
+      drawPhoto(lc, im, w, h);
+      lc.globalCompositeOperation = "destination-in";
+      lc.drawImage(paint, 0, 0);
+      target.globalAlpha = im.opacity;
+      target.globalCompositeOperation = im.blend;
+      target.drawImage(layer, 0, 0);
+    } else {
+      target.globalAlpha = im.opacity;
+      target.globalCompositeOperation = im.blend;
+      drawPhoto(target, im, w, h);
+    }
+    target.restore();
+    target.globalAlpha = 1;
+    target.globalCompositeOperation = "source-over";
+  }
+
+  if (state.text.value){
+    var t = state.text;
+    target.save();
+    target.translate(t.x * w, t.y * h);
+    target.rotate(t.rot * Math.PI / 180);
+    target.font = "800 " + t.size + "px Inter, Helvetica, Arial, sans-serif";
+    target.textAlign = "center";
+    target.textBaseline = "middle";
+    if (t.outline){
+      target.lineWidth = Math.max(2, t.size * 0.09);
+      target.strokeStyle = "rgba(0,0,0,0.85)";
+      target.strokeText(t.value, 0, 0);
+    }
+    target.fillStyle = t.color;
+    target.fillText(t.value, 0, 0);
+    target.restore();
+  }
+
+  var guideAlpha = forExport ? (state.bake ? 1 : 0) : Math.max(state.guide/100, state.bake ? 1 : 0);
+  if (guideAlpha > 0){
+    target.save();
+    target.globalAlpha = guideAlpha;
+    target.globalCompositeOperation = "multiply";
+    target.drawImage(tpl.img, 0, 0);
+    target.restore();
+  }
+}
+
+function drawPhoto(c, im, w, h){
+  var iw = imageEl.naturalWidth, ih = imageEl.naturalHeight;
+  var base = Math.max(w/iw, h/ih);
+  var k = base * im.scale;
+  c.save();
+  c.translate(im.x * w, im.y * h);
+  c.rotate(im.rot * Math.PI/180);
+  c.drawImage(imageEl, -iw*k/2, -ih*k/2, iw*k, ih*k);
+  c.restore();
+}
+
+/* ---------- interaction ---------- */
+function canvasPoint(ev){
+  var rect = cv.getBoundingClientRect();
+  return {
+    x: (ev.clientX - rect.left) / rect.width * cv.width,
+    y: (ev.clientY - rect.top) / rect.height * cv.height
+  };
+}
+
+cv.addEventListener("pointerdown", function(ev){
+  if (!tpl) return;
+  cv.setPointerCapture(ev.pointerId);
+  var p = canvasPoint(ev);
+  if (state.tool === "panel"){
+    var rid = tpl.labels[(p.y|0) * tpl.w + (p.x|0)];
+    if (rid < 0){ setStatus("That is a panel edge — click inside a white area.", "warn"); return; }
+    pushHistory();
+    state.fills = state.fills.filter(function(f){ return f.rid !== rid; });
+    state.fills.push({rid:rid, style:Object.assign({}, state.style)});
+    render();
+    setStatus("Panel painted. " + state.fills.length + " painted so far.", "ok");
+  } else if (state.tool === "image" && state.image){
+    dragging = {kind:"image", dx:p.x/tpl.w - state.image.x, dy:p.y/tpl.h - state.image.y};
+  } else if (state.tool === "text" && state.text.value){
+    dragging = {kind:"text", dx:p.x/tpl.w - state.text.x, dy:p.y/tpl.h - state.text.y};
+  }
+});
+
+cv.addEventListener("pointermove", function(ev){
+  if (!dragging) return;
+  var p = canvasPoint(ev);
+  var obj = dragging.kind === "image" ? state.image : state.text;
+  obj.x = p.x/tpl.w - dragging.dx;
+  obj.y = p.y/tpl.h - dragging.dy;
+  render();
+});
+
+["pointerup","pointercancel"].forEach(function(evt){
+  cv.addEventListener(evt, function(){ dragging = null; });
+});
+
+function pushHistory(){
+  history.push(JSON.stringify(state.fills));
+  if (history.length > 40) history.shift();
+}
+
+/* ---------- ui wiring ---------- */
+function setStatus(msg, cls){
+  var el = document.getElementById("status");
+  el.textContent = msg;
+  el.className = "status" + (cls ? " " + cls : "");
+}
+
+function buildVehicles(){
+  var host = document.getElementById("vehicles");
+  VEHICLES.forEach(function(v){
+    var b = document.createElement("button");
+    b.type = "button";
+    b.dataset.key = v.key;
+    b.setAttribute("aria-pressed", String(v.key === state.vehicle));
+    b.innerHTML = '<img src="templates/' + v.key + '/vehicle.png" alt="" loading="lazy"/><span class="nm">' + v.name + "</span>";
+    b.addEventListener("click", function(){
+      state.vehicle = v.key;
+      state.fills = []; history = [];
+      Array.prototype.forEach.call(host.children, function(c){
+        c.setAttribute("aria-pressed", String(c.dataset.key === v.key));
+      });
+      document.getElementById("vehicleNote").textContent = v.note;
+      loadTemplate(v.key);
+    });
+    host.appendChild(b);
+  });
+}
+
+function bind(id, evt, fn){ document.getElementById(id).addEventListener(evt, fn); }
+function val(id){ return document.getElementById(id).value; }
+
+function syncStyleUI(){
+  var kind = state.style.kind;
+  document.getElementById("patternRow").style.display = kind === "pattern" ? "" : "none";
+  document.getElementById("scaleRow").style.display   = kind === "pattern" ? "" : "none";
+  document.getElementById("angleRow").style.display   = kind === "solid"   ? "none" : "";
+  Array.prototype.forEach.call(document.getElementById("styleKinds").children, function(b){
+    b.setAttribute("aria-pressed", String(b.dataset.kind === kind));
+  });
+  document.getElementById("pattern").value = state.style.pattern;
+  document.getElementById("c1").value = state.style.c1;
+  document.getElementById("c2").value = state.style.c2;
+  document.getElementById("c3").value = state.style.c3;
+  document.getElementById("angle").value = state.style.angle;
+  document.getElementById("scale").value = state.style.scale;
+}
+
+document.getElementById("styleKinds").addEventListener("click", function(ev){
+  var b = ev.target.closest("button"); if (!b) return;
+  state.style.kind = b.dataset.kind;
+  syncStyleUI();
+});
+
+document.getElementById("tools").addEventListener("click", function(ev){
+  var b = ev.target.closest("button"); if (!b) return;
+  state.tool = b.dataset.tool;
+  Array.prototype.forEach.call(this.children, function(c){
+    c.setAttribute("aria-pressed", String(c.dataset.tool === state.tool));
+  });
+  document.getElementById("toolHint").textContent =
+    state.tool === "panel" ? "Click a panel on the template to paint it with the current style."
+    : state.tool === "image" ? "Drag on the canvas to move the photo."
+    : "Drag on the canvas to move the text.";
+  cv.style.cursor = state.tool === "panel" ? "crosshair" : "grab";
+});
+
+["pattern","c1","c2","c3","angle","scale"].forEach(function(id){
+  bind(id, "input", function(){
+    state.style.pattern = val("pattern");
+    state.style.c1 = val("c1"); state.style.c2 = val("c2"); state.style.c3 = val("c3");
+    state.style.angle = +val("angle"); state.style.scale = +val("scale");
+  });
+});
+
+bind("shuffle", "click", function(){
+  state.style.seed = (Math.random()*100000)|0;
+  state.fills.forEach(function(f){ if (f.style.kind === "pattern") f.style.seed = state.style.seed; });
+  render();
+});
+
+bind("swap", "click", function(){
+  var s = state.style;
+  var t = s.c1; s.c1 = s.c2; s.c2 = s.c3; s.c3 = t;
+  syncStyleUI(); render();
+});
+
+bind("fillAll", "click", function(){
+  if (!tpl) return;
+  pushHistory();
+  state.fills = tpl.regions.filter(function(r){ return r.size > 60; })
+    .map(function(r){ return {rid:r.id, style:Object.assign({}, state.style)}; });
+  render();
+  setStatus("Filled " + state.fills.length + " panels.", "ok");
+});
+
+bind("randomPanels", "click", function(){
+  if (!tpl) return;
+  pushHistory();
+  var pal = [state.style.c1, state.style.c2, state.style.c3];
+  state.fills = tpl.regions.filter(function(r){ return r.size > 60; }).map(function(r, i){
+    var st = Object.assign({}, state.style);
+    st.kind = "solid";
+    st.c1 = pal[i % pal.length];
+    return {rid:r.id, style:st};
+  });
+  render();
+  setStatus("Every panel got a color from the palette.", "ok");
+});
+
+bind("undo", "click", function(){
+  if (!history.length){ setStatus("Nothing left to undo."); return; }
+  state.fills = JSON.parse(history.pop());
+  render();
+});
+
+bind("clearPaint", "click", function(){
+  pushHistory(); state.fills = []; render();
+  setStatus("Paint cleared.");
+});
+
+bind("bleed", "input", function(){ state.bleed = +this.value; render(); });
+bind("guide", "input", function(){ state.guide = +this.value; render(); });
+bind("bakeOutline", "change", function(){ state.bake = this.checked; render(); });
+
+bind("imgFile", "change", function(){
+  var file = this.files && this.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function(){
+    state.image = {src:reader.result, x:0.5, y:0.5, scale:1, rot:0, opacity:1, blend:"source-over", clip:false};
+    imageEl = new Image();
+    imageEl.onload = function(){ syncImageUI(); render(); setStatus("Photo added — switch to Move photo to position it.", "ok"); };
+    imageEl.src = reader.result;
+  };
+  reader.readAsDataURL(file);
+});
+
+function syncImageUI(){
+  if (!state.image) return;
+  document.getElementById("imgScale").value = Math.round(state.image.scale*100);
+  document.getElementById("imgRot").value = state.image.rot;
+  document.getElementById("imgOpacity").value = Math.round(state.image.opacity*100);
+  document.getElementById("imgBlend").value = state.image.blend;
+  document.getElementById("imgClip").checked = state.image.clip;
+}
+
+["imgScale","imgRot","imgOpacity","imgBlend","imgClip"].forEach(function(id){
+  bind(id, "input", function(){
+    if (!state.image) return;
+    state.image.scale = +val("imgScale")/100;
+    state.image.rot = +val("imgRot");
+    state.image.opacity = +val("imgOpacity")/100;
+    state.image.blend = val("imgBlend");
+    state.image.clip = document.getElementById("imgClip").checked;
+    render();
+  });
+});
+
+bind("imgRemove", "click", function(){
+  state.image = null; imageEl = null;
+  document.getElementById("imgFile").value = "";
+  render();
+});
+
+["textValue","textSize","textRot","textColor","textOutline"].forEach(function(id){
+  bind(id, "input", function(){
+    state.text.value = val("textValue");
+    state.text.size = +val("textSize");
+    state.text.rot = +val("textRot");
+    state.text.color = val("textColor");
+    state.text.outline = document.getElementById("textOutline").checked;
+    render();
+  });
+});
+
+var PRESETS = {
+  "blue-camo": {kind:"pattern", pattern:"camo", c1:"#0b1220", c2:"#2f5fae", c3:"#5b8fe0", angle:35, scale:90},
+  "sunburst":  {kind:"gradient", pattern:"camo", c1:"#2b0a3d", c2:"#e0533d", c3:"#ffc86b", angle:120, scale:70},
+  "stealth":   {kind:"pattern", pattern:"digital", c1:"#101418", c2:"#1c232b", c3:"#2c343d", angle:0, scale:64},
+  "racing":    {kind:"pattern", pattern:"stripes", c1:"#f2f4f7", c2:"#1b1f24", c3:"#d5232f", angle:90, scale:60},
+  "cotton":    {kind:"gradient", pattern:"waves", c1:"#ffd1e8", c2:"#c9b6ff", c3:"#9fe4ff", angle:45, scale:80},
+  "rust":      {kind:"pattern", pattern:"grain", c1:"#6b3a1f", c2:"#a5642f", c3:"#3a2213", angle:0, scale:40}
+};
+
+document.querySelector(".presets").addEventListener("click", function(ev){
+  var b = ev.target.closest("button"); if (!b) return;
+  var p = PRESETS[b.dataset.preset]; if (!p) return;
+  Object.assign(state.style, p);
+  state.style.seed = (Math.random()*100000)|0;
+  syncStyleUI();
+  document.getElementById("fillAll").click();
+});
+
+/* ---------- export ---------- */
+function safeName(raw){
+  var n = (raw || "My Wrap").replace(/[^A-Za-z0-9_\- ]/g, "").replace(/\s+/g, " ").trim().slice(0, 30);
+  return n || "My Wrap";
+}
+
+function toBlob(canvas){
+  return new Promise(function(res){ canvas.toBlob(res, "image/png"); });
+}
+
+async function exportPng(){
+  if (!tpl) return;
+  render(true);
+  var source = cv;
+  var blob = await toBlob(source);
+  var sizes = [1.0, 0.85, 0.75, 0.625, 0.5];
+  var i = 1;
+  while (blob && blob.size > MAX_BYTES && i < sizes.length){
+    var k = sizes[i++];
+    var down = document.createElement("canvas");
+    down.width = Math.max(512, Math.round(tpl.w * k));
+    down.height = Math.max(512, Math.round(tpl.h * k));
+    var dctx = down.getContext("2d");
+    dctx.imageSmoothingQuality = "high";
+    dctx.drawImage(cv, 0, 0, down.width, down.height);
+    source = down;
+    blob = await toBlob(down);
+  }
+  render(false);
+  if (!blob){ setStatus("The browser could not produce a PNG.", "warn"); return; }
+
+  var name = safeName(val("fileName"));
+  document.getElementById("fileName").value = name;
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url; a.download = name + ".png";
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(function(){ URL.revokeObjectURL(url); }, 2000);
+
+  var kb = Math.round(blob.size/1024);
+  var msg = name + ".png — " + source.width + "×" + source.height + ", " + kb + " KB.";
+  if (blob.size > MAX_BYTES) setStatus(msg + " Still over 1 MB; try a simpler pattern.", "warn");
+  else setStatus(msg + " Ready for Toybox → Paint Shop.", "ok");
+}
+
+bind("download", "click", function(){ exportPng(); });
+
+/* ---------- persistence ---------- */
+function saveDesign(){
+  var payload = {
+    vehicle: state.vehicle, style: state.style, fills: state.fills,
+    text: state.text, bleed: state.bleed, bake: state.bake,
+    fileName: safeName(val("fileName")),
+    image: state.image && state.image.src.length < 900000 ? state.image : null
+  };
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify(payload));
+    setStatus("Design saved in this browser.", "ok");
+  } catch (e){
+    setStatus("Could not save — the photo is probably too large for browser storage.", "warn");
+  }
+}
+bind("save", "click", saveDesign);
+
+function restore(){
+  var raw;
+  try { raw = localStorage.getItem(STORE_KEY); } catch (e){ raw = null; }
+  if (!raw) return false;
+  var saved;
+  try { saved = JSON.parse(raw); } catch (e){ return false; }
+  if (!saved || !saved.vehicle) return false;
+  state.vehicle = saved.vehicle;
+  Object.assign(state.style, saved.style || {});
+  state.fills = saved.fills || [];
+  Object.assign(state.text, saved.text || {});
+  state.bleed = saved.bleed != null ? saved.bleed : state.bleed;
+  state.bake = !!saved.bake;
+  state.fileName = saved.fileName || state.fileName;
+  if (saved.image){
+    state.image = saved.image;
+    imageEl = new Image();
+    imageEl.onload = render;
+    imageEl.src = saved.image.src;
+  }
+  return true;
+}
+
+/* ---------- boot ---------- */
+var restored = restore();
+buildVehicles();
+Array.prototype.forEach.call(document.getElementById("vehicles").children, function(c){
+  c.setAttribute("aria-pressed", String(c.dataset.key === state.vehicle));
+});
+var current = VEHICLES.filter(function(v){ return v.key === state.vehicle; })[0];
+document.getElementById("vehicleNote").textContent = current ? current.note : "";
+document.getElementById("fileName").value = state.fileName;
+document.getElementById("textValue").value = state.text.value;
+document.getElementById("bleed").value = state.bleed;
+document.getElementById("bakeOutline").checked = state.bake;
+syncStyleUI();
+syncImageUI();
+loadTemplate(state.vehicle);
+if (restored) setStatus("Picked up your last saved design.");
+})();
+</script>
+</body>
+</html>
