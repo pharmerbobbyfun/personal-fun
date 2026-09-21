@@ -27,6 +27,10 @@ Open `wraps/index.html` (or `/wraps/` once the site is published).
   plus a photo layer and a text layer.
 - "Seam cover" spreads the paint over the template's black panel edges so the
   exported file has no white seams.
+- A car preview sits next to the canvas: the design is lit by the vehicle
+  render's own shading inside a mask of the bodywork. It is approximate — Tesla
+  ships no UV mapping, so it reads colors, contrast and pattern scale correctly
+  but not where each panel lands.
 - Export writes a PNG at the template's size and automatically scales down if it
   would exceed the 1 MB limit; the file name is trimmed to what the car accepts.
 

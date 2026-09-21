@@ -91,6 +91,14 @@
   details p, details li{font-size:13px; color:var(--muted)}
   details ol{padding-left:18px}
   code{background:var(--panel-2); border:1px solid var(--line); border-radius:5px; padding:1px 5px; font-size:12px}
+  .stage-grid{display:grid; grid-template-columns:minmax(0,1fr) 300px; gap:14px; align-items:start}
+  @media (max-width:1180px){ .stage-grid{grid-template-columns:1fr} }
+  .preview-head{display:flex; align-items:center; justify-content:space-between; gap:8px;
+    font-size:13px; color:var(--muted); margin-bottom:8px}
+  .preview-head label{display:flex; align-items:center; gap:6px}
+  .preview-shell{border-radius:10px; overflow:hidden; background:#101317}
+  .preview-shell canvas{cursor:default}
+  .preview.off .preview-shell, .preview.off .row{display:none}
   .export-row{display:flex; gap:8px; align-items:center}
   .export-row input{flex:1}
 </style>
@@ -210,7 +218,20 @@
   </div>
 
   <div class="stage">
-    <div class="canvas-wrap"><canvas id="cv"></canvas></div>
+    <div class="stage-grid">
+      <div class="canvas-wrap"><canvas id="cv"></canvas></div>
+      <div class="preview" id="preview">
+        <div class="preview-head">
+          <span>Car preview</span>
+          <label><input type="checkbox" id="previewOn" checked/> on</label>
+        </div>
+        <div class="preview-shell"><canvas id="pv"></canvas></div>
+        <label class="row" style="margin:6px 0 0"><span>Strength</span><input type="range" id="previewStrength" min="10" max="100" value="90"/></label>
+        <p class="hint">Approximate. Tesla ships no UV mapping, so this lights your
+        design with the render's own shading over the bodywork &mdash; right for
+        color, contrast and pattern scale, not for where each panel lands.</p>
+      </div>
+    </div>
 
     <footer>
       <label class="row" style="margin:0"><span>Template guide</span><input type="range" id="guide" min="0" max="100" value="45"/></label>
@@ -274,10 +295,14 @@ var state = {
   bake: false,
   image: null,          // {src, x, y, scale, rot, opacity, blend, clip}
   text: {value:"", x:0.5, y:0.5, size:90, rot:0, color:"#ffffff", outline:true},
-  fileName: "My Wrap"
+  fileName: "My Wrap",
+  preview: true,
+  previewStrength: 0.9
 };
 
 var tpl = null;         // {img, w, h, labels:Int32Array, regions:[{id,size,cx,cy}], masks:{}}
+var composed = null;    // the design as it will be exported
+var car = null;         // {img, mask, box} for the preview
 var imageEl = null;
 var history = [];
 var dragging = null;
@@ -342,6 +367,7 @@ function loadTemplate(key){
   };
   img.onerror = function(){ setStatus("Could not load that template.", "warn"); };
   img.src = "templates/" + key + "/template.png";
+  loadCar(key);
 }
 
 /* A mask canvas for one region, dilated by `bleed` so anti-aliased edges are covered. */
@@ -526,10 +552,14 @@ function spread(layer, r){
 }
 
 /* ---------- compose ---------- */
-function render(forExport){
+/* The design without the on-screen guide lives in `composed`; the visible canvas,
+   the export and the car preview are all drawn from it. */
+function render(){
   if (!tpl) return;
   var w = tpl.w, h = tpl.h;
-  var target = ctx;
+  if (!composed){ composed = document.createElement("canvas"); }
+  if (composed.width !== w || composed.height !== h){ composed.width = w; composed.height = h; }
+  var target = composed.getContext("2d");
   target.clearRect(0,0,w,h);
 
   var paint = null;
@@ -589,14 +619,21 @@ function render(forExport){
     target.restore();
   }
 
-  var guideAlpha = forExport ? (state.bake ? 1 : 0) : Math.max(state.guide/100, state.bake ? 1 : 0);
-  if (guideAlpha > 0){
-    target.save();
-    target.globalAlpha = guideAlpha;
-    target.globalCompositeOperation = "multiply";
-    target.drawImage(tpl.img, 0, 0);
-    target.restore();
-  }
+  if (state.bake) multiplyTemplate(target, 1);
+
+  ctx.clearRect(0, 0, w, h);
+  ctx.drawImage(composed, 0, 0);
+  if (!state.bake && state.guide > 0) multiplyTemplate(ctx, state.guide/100);
+
+  updatePreview();
+}
+
+function multiplyTemplate(c, alpha){
+  c.save();
+  c.globalAlpha = alpha;
+  c.globalCompositeOperation = "multiply";
+  c.drawImage(tpl.img, 0, 0);
+  c.restore();
 }
 
 function drawPhoto(c, im, w, h){
@@ -607,6 +644,130 @@ function drawPhoto(c, im, w, h){
   c.translate(im.x * w, im.y * h);
   c.rotate(im.rot * Math.PI/180);
   c.drawImage(imageEl, -iw*k/2, -ih*k/2, iw*k, ih*k);
+  c.restore();
+}
+
+
+/* ---------- car preview ----------
+   There is no UV mapping in Tesla's repo, so this cannot place panels on the
+   body. It lights the design with the render's own shading inside a mask of the
+   painted bodywork: right for color, contrast and pattern scale, wrong for
+   placement. Labelled as approximate in the UI for that reason. */
+function loadCar(key){
+  car = null;
+  var img = new Image();
+  img.onload = function(){
+    var w = img.naturalWidth, h = img.naturalHeight;
+    var off = document.createElement("canvas");
+    off.width = w; off.height = h;
+    var octx = off.getContext("2d", {willReadFrequently:true});
+    octx.drawImage(img, 0, 0);
+    var data = octx.getImageData(0,0,w,h).data;
+
+    /* Bodywork is the bright paint; the studio backdrop, glass, tires and the
+       floor reflection all sit well below it. */
+    var bright = new Uint8Array(w*h);
+    for (var i=0, p=0; i<w*h; i++, p+=4){
+      var lum = 0.299*data[p] + 0.587*data[p+1] + 0.114*data[p+2];
+      bright[i] = (lum > 46 && data[p+3] > 200) ? 1 : 0;
+    }
+
+    /* Collect the bright blobs. The shell is the biggest, but shadow lines split
+       bumpers and sills off it, so keep the other sizeable blobs that sit inside
+       the shell's vertical span too; the floor reflection falls below it. */
+    var seen = new Uint8Array(w*h);
+    var stack = new Int32Array(w*h);
+    var blobs = [];
+    for (var s0=0; s0<w*h; s0++){
+      if (!bright[s0] || seen[s0]) continue;
+      var sp = 0, count = 0, minX = w, maxX = 0, minY = h, maxY = 0;
+      var pixels = [];
+      stack[sp++] = s0; seen[s0] = 1;
+      while (sp > 0){
+        var q = stack[--sp];
+        var qx = q % w, qy = (q - qx) / w;
+        count++; pixels.push(q);
+        if (qx < minX) minX = qx; if (qx > maxX) maxX = qx;
+        if (qy < minY) minY = qy; if (qy > maxY) maxY = qy;
+        if (qx > 0   && bright[q-1] && !seen[q-1]){ seen[q-1] = 1; stack[sp++] = q-1; }
+        if (qx < w-1 && bright[q+1] && !seen[q+1]){ seen[q+1] = 1; stack[sp++] = q+1; }
+        if (qy > 0   && bright[q-w] && !seen[q-w]){ seen[q-w] = 1; stack[sp++] = q-w; }
+        if (qy < h-1 && bright[q+w] && !seen[q+w]){ seen[q+w] = 1; stack[sp++] = q+w; }
+      }
+      blobs.push({count:count, pixels:pixels, minX:minX, maxX:maxX, minY:minY, maxY:maxY,
+                  cy:(minY+maxY)/2});
+    }
+    if (!blobs.length) return;
+    blobs.sort(function(a,b){ return b.count - a.count; });
+    var shell = blobs[0];
+    var keep = blobs.filter(function(bl){
+      return bl === shell ||
+        (bl.count > shell.count*0.004 && bl.cy > shell.minY && bl.cy < shell.maxY);
+    });
+
+    var box = {x:shell.minX, y:shell.minY, w:0, h:0};
+    var bx2 = shell.maxX, by2 = shell.maxY;
+    keep.forEach(function(bl){
+      if (bl.minX < box.x) box.x = bl.minX;
+      if (bl.minY < box.y) box.y = bl.minY;
+      if (bl.maxX > bx2) bx2 = bl.maxX;
+      if (bl.maxY > by2) by2 = bl.maxY;
+    });
+    box.w = bx2 - box.x + 1; box.h = by2 - box.y + 1;
+
+    var mask = document.createElement("canvas");
+    mask.width = w; mask.height = h;
+    var mctx = mask.getContext("2d");
+    var md = mctx.createImageData(w, h);
+    keep.forEach(function(bl){
+      for (var k=0; k<bl.pixels.length; k++){
+        var o = bl.pixels[k] * 4;
+        md.data[o] = 255; md.data[o+1] = 255; md.data[o+2] = 255; md.data[o+3] = 255;
+      }
+    });
+    mctx.putImageData(md, 0, 0);
+
+    car = {img:img, mask:mask, box:box, w:w, h:h};
+    var pv = document.getElementById("pv");
+    pv.width = w; pv.height = h;
+    drawPreview();
+  };
+  img.src = "templates/" + key + "/vehicle.png";
+}
+
+var previewPending = false;
+function updatePreview(){
+  if (previewPending) return;                 // one composite per frame at most
+  previewPending = true;
+  requestAnimationFrame(function(){
+    previewPending = false;
+    drawPreview();
+  });
+}
+
+function drawPreview(){
+  var pv = document.getElementById("pv");
+  if (!car || !composed || !state.preview){ return; }
+  var w = car.w, h = car.h, c = pv.getContext("2d");
+  c.clearRect(0,0,w,h);
+  c.drawImage(car.img, 0, 0);
+
+  /* Design stretched over the bodywork, then lit by the render underneath. */
+  var skin = document.createElement("canvas");
+  skin.width = w; skin.height = h;
+  var kc = skin.getContext("2d");
+  var box = car.box;
+  var k = Math.max(box.w / composed.width, box.h / composed.height);
+  var dw = composed.width * k, dh = composed.height * k;
+  kc.drawImage(composed, box.x + (box.w - dw)/2, box.y + (box.h - dh)/2, dw, dh);
+  kc.globalCompositeOperation = "multiply";
+  kc.drawImage(car.img, 0, 0);            // shading and panel lines
+  kc.globalCompositeOperation = "destination-in";
+  kc.drawImage(car.mask, 0, 0);           // bodywork only
+
+  c.save();
+  c.globalAlpha = state.previewStrength;
+  c.drawImage(skin, 0, 0);
   c.restore();
 }
 
@@ -777,6 +938,16 @@ bind("clearPaint", "click", function(){
 });
 
 bind("bleed", "input", function(){ state.bleed = +this.value; render(); });
+bind("previewOn", "change", function(){
+  state.preview = this.checked;
+  document.getElementById("preview").classList.toggle("off", !state.preview);
+  if (state.preview) updatePreview();
+});
+bind("previewStrength", "input", function(){
+  state.previewStrength = +this.value / 100;
+  updatePreview();
+});
+
 bind("guide", "input", function(){ state.guide = +this.value; render(); });
 bind("bakeOutline", "change", function(){ state.bake = this.checked; render(); });
 
@@ -861,8 +1032,7 @@ function toBlob(canvas){
 
 async function exportPng(){
   if (!tpl) return;
-  render(true);
-  var source = cv;
+  var source = composed;
   var blob = await toBlob(source);
   var sizes = [1.0, 0.85, 0.75, 0.625, 0.5];
   var i = 1;
@@ -873,11 +1043,10 @@ async function exportPng(){
     down.height = Math.max(512, Math.round(tpl.h * k));
     var dctx = down.getContext("2d");
     dctx.imageSmoothingQuality = "high";
-    dctx.drawImage(cv, 0, 0, down.width, down.height);
+    dctx.drawImage(composed, 0, 0, down.width, down.height);
     source = down;
     blob = await toBlob(down);
   }
-  render(false);
   if (!blob){ setStatus("The browser could not produce a PNG.", "warn"); return; }
 
   var name = safeName(val("fileName"));
@@ -902,6 +1071,7 @@ function saveDesign(){
     vehicle: state.vehicle, style: state.style, fills: state.fills,
     text: state.text, bleed: state.bleed, bake: state.bake,
     fileName: safeName(val("fileName")),
+    preview: state.preview, previewStrength: state.previewStrength,
     image: state.image && state.image.src.length < 900000 ? state.image : null
   };
   try {
@@ -926,6 +1096,8 @@ function restore(){
   Object.assign(state.text, saved.text || {});
   state.bleed = saved.bleed != null ? saved.bleed : state.bleed;
   state.bake = !!saved.bake;
+  if (saved.preview != null) state.preview = !!saved.preview;
+  if (saved.previewStrength != null) state.previewStrength = saved.previewStrength;
   state.fileName = saved.fileName || state.fileName;
   if (saved.image){
     state.image = saved.image;
@@ -948,6 +1120,9 @@ document.getElementById("fileName").value = state.fileName;
 document.getElementById("textValue").value = state.text.value;
 document.getElementById("bleed").value = state.bleed;
 document.getElementById("bakeOutline").checked = state.bake;
+document.getElementById("previewOn").checked = state.preview;
+document.getElementById("previewStrength").value = Math.round(state.previewStrength * 100);
+document.getElementById("preview").classList.toggle("off", !state.preview);
 syncStyleUI();
 syncImageUI();
 loadTemplate(state.vehicle);
