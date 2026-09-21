@@ -98,7 +98,11 @@
   .preview-head label{display:flex; align-items:center; gap:6px}
   .preview-shell{border-radius:10px; overflow:hidden; background:#101317}
   .preview-shell canvas{cursor:default}
-  .preview.off .preview-shell, .preview.off .row{display:none}
+  .views{display:flex; align-items:center; gap:8px; margin-top:8px; font-size:12.5px; color:var(--muted)}
+  .views button{padding:2px 9px; line-height:1.2; font-size:15px}
+  .views #viewLabel{flex:1; text-align:center}
+  .views label{display:flex; align-items:center; gap:5px}
+  .preview.off .preview-shell, .preview.off .row, .preview.off .views{display:none}
   .export-row{display:flex; gap:8px; align-items:center}
   .export-row input{flex:1}
 </style>
@@ -226,10 +230,18 @@
           <label><input type="checkbox" id="previewOn" checked/> on</label>
         </div>
         <div class="preview-shell"><canvas id="pv"></canvas></div>
+        <div class="views">
+          <button id="viewPrev" type="button" aria-label="Previous view">&lsaquo;</button>
+          <span id="viewLabel">As shot</span>
+          <button id="viewNext" type="button" aria-label="Next view">&rsaquo;</button>
+          <label><input type="checkbox" id="cycleOn" checked/> cycle</label>
+        </div>
         <label class="row" style="margin:6px 0 0"><span>Strength</span><input type="range" id="previewStrength" min="10" max="100" value="90"/></label>
         <p class="hint">Approximate. Tesla ships no UV mapping, so this lights your
         design with the render's own shading over the bodywork &mdash; right for
-        color, contrast and pattern scale, not for where each panel lands.</p>
+        color, contrast and pattern scale, not for where each panel lands. There is
+        only one render per car, so the views are mirrors and crops of it, not real
+        camera angles.</p>
       </div>
     </div>
 
@@ -297,7 +309,9 @@ var state = {
   text: {value:"", x:0.5, y:0.5, size:90, rot:0, color:"#ffffff", outline:true},
   fileName: "My Wrap",
   preview: true,
-  previewStrength: 0.9
+  previewStrength: 0.9,
+  view: 0,
+  cycle: true
 };
 
 var tpl = null;         // {img, w, h, labels:Int32Array, regions:[{id,size,cx,cy}], masks:{}}
@@ -730,12 +744,26 @@ function loadCar(key){
     car = {img:img, mask:mask, box:box, w:w, h:h};
     var pv = document.getElementById("pv");
     pv.width = w; pv.height = h;
+    state.view = 0;
     drawPreview();
   };
   img.src = "templates/" + key + "/vehicle.png";
 }
 
+/* Tesla ships one render per vehicle, so these are framings of that single shot
+   rather than real camera angles: as shot, mirrored (which reads as the other
+   side of the car), and two closer crops. */
+var VIEWS = [
+  {label:"As shot",       mirror:false, fx:0.5,  fy:0.5,  zoom:1},
+  {label:"Other side",    mirror:true,  fx:0.5,  fy:0.5,  zoom:1},
+  {label:"Front quarter", mirror:false, fx:0.3,  fy:0.62, zoom:1.9},
+  {label:"Rear quarter",  mirror:true,  fx:0.76, fy:0.45, zoom:1.8}
+];
+
+var previewBase = null;   // the render with the design already on it
 var previewPending = false;
+var cycleTimer = null;
+
 function updatePreview(){
   if (previewPending) return;                 // one composite per frame at most
   previewPending = true;
@@ -746,9 +774,11 @@ function updatePreview(){
 }
 
 function drawPreview(){
-  var pv = document.getElementById("pv");
-  if (!car || !composed || !state.preview){ return; }
-  var w = car.w, h = car.h, c = pv.getContext("2d");
+  if (!car || !composed || !state.preview) return;
+  var w = car.w, h = car.h;
+  if (!previewBase){ previewBase = document.createElement("canvas"); }
+  if (previewBase.width !== w || previewBase.height !== h){ previewBase.width = w; previewBase.height = h; }
+  var c = previewBase.getContext("2d");
   c.clearRect(0,0,w,h);
   c.drawImage(car.img, 0, 0);
 
@@ -769,6 +799,43 @@ function drawPreview(){
   c.globalAlpha = state.previewStrength;
   c.drawImage(skin, 0, 0);
   c.restore();
+
+  paintView();
+}
+
+/* Crop and mirror `previewBase` into the visible canvas for the current view. */
+function paintView(){
+  if (!car || !previewBase) return;
+  var pv = document.getElementById("pv");
+  var w = car.w, h = car.h;
+  var v = VIEWS[state.view % VIEWS.length];
+  var c = pv.getContext("2d");
+
+  var sw = w / v.zoom, sh = h / v.zoom;
+  var box = car.box;
+  var cx = box.x + box.w * v.fx, cy = box.y + box.h * v.fy;
+  var sx = Math.min(Math.max(cx - sw/2, 0), w - sw);
+  var sy = Math.min(Math.max(cy - sh/2, 0), h - sh);
+
+  c.save();
+  c.clearRect(0,0,w,h);
+  if (v.mirror){ c.translate(w, 0); c.scale(-1, 1); }
+  c.imageSmoothingQuality = "high";
+  c.drawImage(previewBase, sx, sy, sw, sh, 0, 0, w, h);
+  c.restore();
+
+  document.getElementById("viewLabel").textContent = v.label;
+}
+
+function stepView(delta){
+  state.view = (state.view + delta + VIEWS.length) % VIEWS.length;
+  paintView();
+}
+
+function setCycling(on){
+  state.cycle = on;
+  if (cycleTimer){ clearInterval(cycleTimer); cycleTimer = null; }
+  if (on && state.preview) cycleTimer = setInterval(function(){ stepView(1); }, 3200);
 }
 
 /* ---------- interaction ---------- */
@@ -941,7 +1008,17 @@ bind("bleed", "input", function(){ state.bleed = +this.value; render(); });
 bind("previewOn", "change", function(){
   state.preview = this.checked;
   document.getElementById("preview").classList.toggle("off", !state.preview);
+document.getElementById("cycleOn").checked = state.cycle;
+setCycling(state.cycle);
+  setCycling(state.cycle);
   if (state.preview) updatePreview();
+});
+bind("viewPrev", "click", function(){ stepView(-1); });
+bind("viewNext", "click", function(){ stepView(1); });
+bind("pv", "click", function(){ stepView(1); });
+bind("cycleOn", "change", function(){ setCycling(this.checked); });
+document.addEventListener("visibilitychange", function(){
+  setCycling(document.hidden ? false : document.getElementById("cycleOn").checked);
 });
 bind("previewStrength", "input", function(){
   state.previewStrength = +this.value / 100;
@@ -1071,7 +1148,7 @@ function saveDesign(){
     vehicle: state.vehicle, style: state.style, fills: state.fills,
     text: state.text, bleed: state.bleed, bake: state.bake,
     fileName: safeName(val("fileName")),
-    preview: state.preview, previewStrength: state.previewStrength,
+    preview: state.preview, previewStrength: state.previewStrength, cycle: state.cycle,
     image: state.image && state.image.src.length < 900000 ? state.image : null
   };
   try {
@@ -1098,6 +1175,7 @@ function restore(){
   state.bake = !!saved.bake;
   if (saved.preview != null) state.preview = !!saved.preview;
   if (saved.previewStrength != null) state.previewStrength = saved.previewStrength;
+  if (saved.cycle != null) state.cycle = !!saved.cycle;
   state.fileName = saved.fileName || state.fileName;
   if (saved.image){
     state.image = saved.image;
@@ -1123,6 +1201,8 @@ document.getElementById("bakeOutline").checked = state.bake;
 document.getElementById("previewOn").checked = state.preview;
 document.getElementById("previewStrength").value = Math.round(state.previewStrength * 100);
 document.getElementById("preview").classList.toggle("off", !state.preview);
+document.getElementById("cycleOn").checked = state.cycle;
+setCycling(state.cycle);
 syncStyleUI();
 syncImageUI();
 loadTemplate(state.vehicle);

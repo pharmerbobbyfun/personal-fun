@@ -31,6 +31,10 @@ Open `wraps/index.html` (or `/wraps/` once the site is published).
   render's own shading inside a mask of the bodywork. It is approximate — Tesla
   ships no UV mapping, so it reads colors, contrast and pattern scale correctly
   but not where each panel lands.
+- The preview cycles four views (as shot, mirrored, front quarter, rear quarter).
+  Tesla ships one render per car, so these are mirrors and crops of that single
+  shot rather than real camera angles. Step through them with the arrows or by
+  clicking the preview; "cycle" turns the auto-advance off.
 - Export writes a PNG at the template's size and automatically scales down if it
   would exceed the 1 MB limit; the file name is trimmed to what the car accepts.
 
