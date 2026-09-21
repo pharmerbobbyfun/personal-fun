@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - claude/vacation-packing-list-4o0s9r
+      - claude/custom-wraps-build-lqu0e8
   workflow_dispatch:
 
 permissions:
